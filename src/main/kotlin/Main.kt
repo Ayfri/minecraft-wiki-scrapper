@@ -16,6 +16,8 @@ operator fun Regex.contains(text: CharSequence): Boolean = this.matches(text)
 suspend fun main() {
 	val client = HttpClient(CIO)
 	val response: HttpResponse = client.get(listLink)
+	val versions = mutableListOf<Version>()
+	val snapshots = mutableListOf<Snapshot>()
 	var validLinks = false
 	response.readText().substringAfter("References").substringBefore("Categories").split("\n").forEach {
 		if (it.contains("<li>")) {
@@ -25,7 +27,6 @@ suspend fun main() {
 			if (!validLinks) return@forEach
 			val versionLink = "https://minecraft.fandom.com$versionSubPath"
 			println(versionLink)
-			
 			
 			val versionResponse: HttpResponse = client.get(versionLink)
 			val versionText = versionResponse.readText()
@@ -59,9 +60,11 @@ suspend fun main() {
 				println("Failed to parse date: $versionDate")
 				null
 			}
-			val snapshot = Snapshot(versionName.trim(), formattedDate?.toEpochSecond(LocalTime.now(), ZoneOffset.UTC), versionDownloadName, versionDownloadJSON)
 			
-			println(snapshot)
+			// use skrapper to get description of snapshot
+			
+			val snapshot = Snapshot(versionName.trim(), formattedDate?.toEpochSecond(LocalTime.now(), ZoneOffset.UTC), "", versionDownloadName, versionDownloadJSON)
+			snapshots.add(snapshot)
 		}
 	}
 }
@@ -69,6 +72,16 @@ suspend fun main() {
 data class Snapshot(
 	val name: String,
 	val releaseTime: Long?,
+	val description: String?,
 	val download: String?,
 	val downloadJSON: String?
+)
+
+data class Version(
+	val name: String,
+	val releaseTime: Long?,
+	val imageUrl: String = "",
+	val description: String,
+	val importantDescription: String = description.split("\n").take(4).joinToString("\n"),
+	val snapshots: List<Snapshot>
 )
