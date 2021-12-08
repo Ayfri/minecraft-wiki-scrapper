@@ -8,6 +8,8 @@ import it.skrape.fetcher.extractIt
 import it.skrape.fetcher.skrape
 import it.skrape.selects.html5.div
 import it.skrape.selects.html5.h1
+import it.skrape.selects.html5.map
+import java.awt.Color.red
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneOffset
@@ -23,6 +25,8 @@ fun String.remove(regex: Regex) = replace(regex, "")
 fun String.remove(regex: String) = replace(regex, "")
 fun String.get(regex: Regex) = replace(regex, "$1")
 fun String.getIfMatches(regex: Regex) = if (matches(regex)) get(regex) else null
+
+fun printError(message: Any) = println("\u001B[31m$message\u001B[0m")
 
 data class Snapshot(
 	var name: String = "",
@@ -41,7 +45,6 @@ data class Version(
 	var snapshots: List<Snapshot>
 )
 
-
 suspend fun main() {
 	val client = HttpClient(CIO)
 	val response: HttpResponse = client.get(listLink)
@@ -54,7 +57,7 @@ suspend fun main() {
 			val version = it.split("<li>")[1].split("</li>")[0]
 			val versionSubPath = Regex("<a href=\"(/wiki/[\\w_.-]+)\"").find(version)?.groupValues?.get(1) ?: return@forEach
 			if (versionSubPath == firstValidVersion) validLinks = true
-			if (!validLinks) return@forEach
+			if (!validLinks || "Java_Edition" !in versionSubPath) return@forEach
 			val versionLink = "https://minecraft.fandom.com$versionSubPath"
 			println(versionLink)
 			
@@ -67,30 +70,33 @@ suspend fun main() {
 					htmlDocument {
 						relaxed = true
 						
-						it.name = h1(".page-header__title") {
-							findFirst { ownText }
+						if (findFirst("ul.categories").children.map { it.text }.none { it == "Java Edition versions"}) {
+							return@htmlDocument
 						}
+						
+						it.name = h1(".page-header__title") { findFirst { ownText } }
 						it.description = div(".mw-parser-output") {
-							findFirst {
-								children.first { it.tagName == "p" }.text
-							}
+							findFirst { children.first { it.tagName == "p" }.text }
 						}
 						
 						val table = findFirst(".infobox-rows > tbody")
-						val download = table.findFirst {
-							findAll("tr").first {
-								it.children.any { it.text.contains("Downloads") }
-							}
-						}
 						
-						it.downloadClient = download.findFirst("td > p").let {
-							it.children.firstOrNull { it.tagName == "a" }?.attributes?.get("href")
-						}
-						it.downloadJSON = download.findFirst("td > p").let {
-							it.children.firstOrNull {
-								it.tagName == "a" && it.attributes["href"]?.endsWith(".json") == true
-							}?.attributes?.get("href")
-						}
+						try {
+							val download = table.findFirst {
+								findAll("tr").first {
+									it.children.any { it.text.contains("Downloads") }
+								}
+							}
+							it.downloadClient = download.findFirst("td > p").let {
+								it.children.firstOrNull { it.tagName == "a" }?.attributes?.get("href")
+							}
+							it.downloadJSON = download.findFirst("td > p").let {
+								it.children.firstOrNull {
+									it.tagName == "a" && it.attributes["href"]?.endsWith(".json") == true
+								}?.attributes?.get("href")
+							}
+						} catch (_: Exception) {}
+						
 						
 						it.releaseTime = table.findFirst {
 							findAll("tr").firstOrNull {
@@ -99,17 +105,18 @@ suspend fun main() {
 						}?.findFirst("td")?.let { td ->
 							td.children.firstOrNull { it.tagName == "p" }?.text?.let {
 								var result = it
-								if ("Original" in it) {
-									Regex("<b>Original:</b>(.*?)<br />").find(it)?.groupValues?.get(1)?.let { result = it }
-								} else if ("<sup" in it) {
-									Regex("(.+?)(?><sup.+?</sup>)").find(it)?.groupValues?.get(1)?.let { result = it }
+								result = when {
+									"[" in it -> result.remove(Regex("\\[.*?]"))
+									else -> result
 								}
+								result = result.get(Regex("[\\w-]+: (.+?) \\w+: .+"))
+								
 								
 								val formatter = DateTimeFormatter.ofPattern("MMMM d, yyyy", Locale.ENGLISH)
 								val formattedDate = try {
-									LocalDate.parse(result.trim(), formatter)
+									LocalDate.parse(result.trimEnd(), formatter)
 								} catch (e: Exception) {
-									println("Failed to parse date: $result")
+									printError("Failed to parse date: '$it' ($result)")
 									null
 								}
 								formattedDate?.toEpochSecond(LocalTime.now(), ZoneOffset.UTC)
