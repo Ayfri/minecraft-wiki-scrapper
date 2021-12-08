@@ -12,10 +12,9 @@ repositories {
 }
 
 dependencies {
-    implementation("org.jetbrains.kotlinx:kotlinx-html-jvm:0.7.3")
-    implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.3.1")
     implementation("io.ktor:ktor-client-core:1.6.6")
     implementation("io.ktor:ktor-client-cio:1.6.6")
+    implementation("it.skrape:skrapeit:1.1.6")
 }
 
 tasks.withType<KotlinCompile> {

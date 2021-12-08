@@ -2,6 +2,12 @@ import io.ktor.client.*
 import io.ktor.client.engine.cio.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
+import it.skrape.core.htmlDocument
+import it.skrape.fetcher.HttpFetcher
+import it.skrape.fetcher.extractIt
+import it.skrape.fetcher.skrape
+import it.skrape.selects.html5.div
+import it.skrape.selects.html5.h1
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneOffset
@@ -13,13 +19,37 @@ const val listLink = "https://minecraft.fandom.com/wiki/Java_Edition_version_his
 
 operator fun Regex.contains(text: CharSequence): Boolean = this.matches(text)
 
+fun String.remove(regex: Regex) = replace(regex, "")
+fun String.remove(regex: String) = replace(regex, "")
+fun String.get(regex: Regex) = replace(regex, "$1")
+fun String.getIfMatches(regex: Regex) = if (matches(regex)) get(regex) else null
+
+data class Snapshot(
+	var name: String = "",
+	var releaseTime: Long? = null,
+	var description: String? = null,
+	var downloadClient: String? = null,
+	var downloadJSON: String? = null
+)
+
+data class Version(
+	var name: String,
+	var releaseTime: Long?,
+	var imageUrl: String = "",
+	var description: String,
+	var importantDescription: String = description.split("\n").take(4).joinToString("\n"),
+	var snapshots: List<Snapshot>
+)
+
+
 suspend fun main() {
 	val client = HttpClient(CIO)
 	val response: HttpResponse = client.get(listLink)
 	val versions = mutableListOf<Version>()
 	val snapshots = mutableListOf<Snapshot>()
 	var validLinks = false
-	response.readText().substringAfter("References").substringBefore("Categories").split("\n").forEach {
+	
+	response.readText().substringAfter("References").substringBefore("Categories").split("\n").forEach { it ->
 		if (it.contains("<li>")) {
 			val version = it.split("<li>")[1].split("</li>")[0]
 			val versionSubPath = Regex("<a href=\"(/wiki/[\\w_.-]+)\"").find(version)?.groupValues?.get(1) ?: return@forEach
@@ -28,60 +58,70 @@ suspend fun main() {
 			val versionLink = "https://minecraft.fandom.com$versionSubPath"
 			println(versionLink)
 			
-			val versionResponse: HttpResponse = client.get(versionLink)
-			val versionText = versionResponse.readText()
-			val versionName = Regex("<h1.+?class=\"page-header__title\".+?>(.+?)</h1>", RegexOption.DOT_MATCHES_ALL).find(versionText)?.groupValues?.get(1) ?: "title"
-			val versionDownloadName =
-				Regex(
-					"href=\"https://archive.org/download/Minecraft-JE-\\w+/(.+?)/\\1.jar\"|href=\"https://launcher.mojang.com/v1/objects/(\\w+)/client.jar\"",
-					RegexOption.DOT_MATCHES_ALL
-				).find(versionText)?.groupValues?.drop(1)?.first { it.isNotBlank() }
-			val versionDownloadJSON =
-				Regex(
-					"href=\"https://archive.org/download/Minecraft-JE-\\w+/(.+?)/\\1.json\"|href=\"https://launcher.mojang.com/v1/objects/(\\w+/[\\w.-_]+).json\"",
-					RegexOption.DOT_MATCHES_ALL
-				).find(versionText)?.groupValues?.drop(1)?.first { it.isNotBlank() }
-			
-			var versionDate =
-				Regex(
-					"<tr>.+?<th>Release date.+?</th>.+?<td>.+?<p>(.+?)</p>.+?</td></tr>",
-					RegexOption.DOT_MATCHES_ALL
-				).find(versionText)?.groupValues?.get(1) ?: "date"
-			if ("Original" in versionDate) {
-				Regex("<b>Original:</b>(.*?)<br />").find(versionDate)?.groupValues?.get(1)?.let { versionDate = it }
-			} else if ("<sup" in versionDate) {
-				Regex("(.+?)(?><sup.+?</sup>)").find(versionDate)?.groupValues?.get(1)?.let { versionDate = it }
+			val extracted = skrape(HttpFetcher) {
+				request {
+					url = versionLink
+				}
+				
+				extractIt<Snapshot> {
+					htmlDocument {
+						relaxed = true
+						
+						it.name = h1(".page-header__title") {
+							findFirst { ownText }
+						}
+						it.description = div(".mw-parser-output") {
+							findFirst {
+								children.first { it.tagName == "p" }.text
+							}
+						}
+						
+						val table = findFirst(".infobox-rows > tbody")
+						val download = table.findFirst {
+							findAll("tr").first {
+								it.children.any { it.text.contains("Downloads") }
+							}
+						}
+						
+						it.downloadClient = download.findFirst("td > p").let {
+							it.children.firstOrNull { it.tagName == "a" }?.attributes?.get("href")
+						}
+						it.downloadJSON = download.findFirst("td > p").let {
+							it.children.firstOrNull {
+								it.tagName == "a" && it.attributes["href"]?.endsWith(".json") == true
+							}?.attributes?.get("href")
+						}
+						
+						it.releaseTime = table.findFirst {
+							findAll("tr").firstOrNull {
+								it.children.any { it.text.contains("Release date") }
+							}
+						}?.findFirst("td")?.let { td ->
+							td.children.firstOrNull { it.tagName == "p" }?.text?.let {
+								var result = it
+								if ("Original" in it) {
+									Regex("<b>Original:</b>(.*?)<br />").find(it)?.groupValues?.get(1)?.let { result = it }
+								} else if ("<sup" in it) {
+									Regex("(.+?)(?><sup.+?</sup>)").find(it)?.groupValues?.get(1)?.let { result = it }
+								}
+								
+								val formatter = DateTimeFormatter.ofPattern("MMMM d, yyyy", Locale.ENGLISH)
+								val formattedDate = try {
+									LocalDate.parse(result.trim(), formatter)
+								} catch (e: Exception) {
+									println("Failed to parse date: $result")
+									null
+								}
+								formattedDate?.toEpochSecond(LocalTime.now(), ZoneOffset.UTC)
+							}
+						}
+					}
+				}
 			}
 			
-			val formatter = DateTimeFormatter.ofPattern("MMMM d, yyyy", Locale.ENGLISH)
-			val formattedDate = try {
-				LocalDate.parse(versionDate.trim(), formatter)
-			} catch (e: Exception) {
-				println("Failed to parse date: $versionDate")
-				null
-			}
+			println(extracted)
 			
-			// use skrapper to get description of snapshot
-			
-			val snapshot = Snapshot(versionName.trim(), formattedDate?.toEpochSecond(LocalTime.now(), ZoneOffset.UTC), "", versionDownloadName, versionDownloadJSON)
-			snapshots.add(snapshot)
+			snapshots.add(extracted)
 		}
 	}
 }
-
-data class Snapshot(
-	val name: String,
-	val releaseTime: Long?,
-	val description: String?,
-	val download: String?,
-	val downloadJSON: String?
-)
-
-data class Version(
-	val name: String,
-	val releaseTime: Long?,
-	val imageUrl: String = "",
-	val description: String,
-	val importantDescription: String = description.split("\n").take(4).joinToString("\n"),
-	val snapshots: List<Snapshot>
-)
