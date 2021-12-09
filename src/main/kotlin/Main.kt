@@ -79,14 +79,13 @@ suspend fun main() {
 								}
 								
 								it.imageUrl = findFirst("div.infobox-imagearea.animated-container > div > a.image > img").attributes["src"] ?: "Not found."
-								it.snapshots =
-									el.findAll("td > ul > li a") {
-										filter {
-											snapshotListSkip.none { exception -> it.text.contains(exception) }
-										}.map {
-											scrapSnapshot(it.href ?: "")
-										}
+								it.snapshots = el.findAll("td > ul > li a") {
+									filter {
+										snapshotListSkip.none { exception -> it.text.contains(exception) }
+									}.map {
+										scrapSnapshot(it.href ?: "")
 									}
+								}
 							}
 						}
 					}
@@ -96,6 +95,9 @@ suspend fun main() {
 			}
 		}
 	}
+	val releaseVersion = versions.dropWhile { it.name == "Java Edition" }[0]
+	// TODO : Split this release into multiple versions
+	
 	println(versions)
 }
 
@@ -132,9 +134,25 @@ fun scrapSnapshot(link: String) = skrape(HttpFetcher) {
 						it.tagName == "a" && it.href?.endsWith(".json") == true
 					}?.href
 				}
+				if (
+					table.contains {
+						findAll("tr").first {
+							it.children.any {
+								it.text.matches(Regex("(Snapshot|Pre-Release|Release Candidate) for"))
+							}
+						}
+					}
+				) {
+					it.snapshotFor = table.findAny {
+						findAll("tr").first {
+							it.children.any {
+								it.text.matches(Regex("(Snapshot|Pre-Release|Release Candidate) for"))
+							}
+						}
+					}?.findFirst("td > p > a")?.text?.get(Regex("(\\d.\\d+)(?>.\\d+)?"))
+				}
 			} catch (_: Exception) {
 			}
-			
 			
 			it.releaseTime = table.findFirst {
 				findAll("tr").firstOrNull {
