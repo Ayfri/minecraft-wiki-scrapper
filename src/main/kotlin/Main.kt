@@ -1,26 +1,23 @@
 import io.ktor.client.*
 import io.ktor.client.engine.cio.*
-import io.ktor.client.request.*
-import io.ktor.client.statement.*
 import it.skrape.core.htmlDocument
 import it.skrape.fetcher.HttpFetcher
 import it.skrape.fetcher.extractIt
 import it.skrape.fetcher.skrape
 import it.skrape.selects.html5.div
 import it.skrape.selects.html5.h1
-import it.skrape.selects.html5.img
 import it.skrape.selects.html5.th
-import it.skrape.selects.html5.tr
-import it.skrape.selects.text
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.*
 
-const val listLink = "https://minecraft.fandom.com/wiki/Java_Edition_version_history"
+const val LIST_LINK = "https://minecraft.fandom.com/wiki/Java_Edition_version_history"
+const val FANDOM_URL = "https://minecraft.fandom.com"
 
 val versionsExceptions = listOf("April Fools updates")
+
 // TODO : Handle exceptions
 
 fun calculateDate(str: String): Long? {
@@ -30,12 +27,13 @@ fun calculateDate(str: String): Long? {
 		else -> result
 	}
 	result = result.get(Regex("[\\w-]+: (.+?) \\w+: .+"))
+	result = result.get(Regex(".+?\\((.+?)\\)"))
 	
 	val formatter = DateTimeFormatter.ofPattern("MMMM d, yyyy", Locale.ENGLISH)
 	val formattedDate = try {
-		LocalDate.parse(str.trimEnd(), formatter)
+		LocalDate.parse(result.trimEnd(), formatter)
 	} catch (e: Exception) {
-		printError("Failed to parse date: '$str' ($str)")
+		printError("Failed to parse date: '$result' ($result)")
 		null
 	}
 	return formattedDate?.toEpochSecond(LocalTime.now(), ZoneOffset.UTC)
@@ -46,10 +44,11 @@ suspend fun main() {
 	val versions = mutableListOf<Version>()
 	skrape(HttpFetcher) {
 		request {
-			url = listLink
+			url = LIST_LINK
 		}
 		
-		extractIt<List<Version>> {
+		
+		extractIt<Any> {
 			htmlDocument {
 				relaxed = true
 				
@@ -58,7 +57,7 @@ suspend fun main() {
 					val version = skrape(HttpFetcher) {
 						request {
 							val subLink = el.findFirst("a").attributes["href"] ?: return@request
-							url = "https://minecraft.fandom.com$subLink"
+							url = FANDOM_URL + subLink
 						}
 						
 						extractIt<Version> {
@@ -72,15 +71,16 @@ suspend fun main() {
 											this
 										}
 									}
-								}?.findFirst("td")?.text?.let { date ->
+								}?.parent?.findFirst("td")?.text?.let { date ->
 									it.releaseTime = calculateDate(date)
 								}
 								
-								it.imageUrl = findFirst("div.infobox-imagearea animated-container > div > a.img > img").attributes["href"] ?: "Not found."
-								it.snapshots = el.findAll("td > ul > li > i > a") { map { scrapSnapshot(it.attributes["href"] ?: "") }}
+								it.imageUrl = findFirst("div.infobox-imagearea.animated-container > div > a.image > img").attributes["src"] ?: "Not found."
+								it.snapshots = el.findAll("td > ul > li a") { map { scrapSnapshot(it.attributes["href"] ?: "") } }
 							}
 						}
 					}
+					println(version)
 					versions += version
 				}
 			}
@@ -90,15 +90,13 @@ suspend fun main() {
 }
 
 fun scrapSnapshot(link: String) = skrape(HttpFetcher) {
-	println(link)
+	println("Snapshot: $FANDOM_URL$link")
 	request {
-		url = link
+		url = FANDOM_URL + link
 	}
 	
 	extractIt<Snapshot> {
 		htmlDocument {
-			relaxed = true
-			
 			if (findFirst("ul.categories").children.map { it.text }.none { it == "Java Edition versions" }) {
 				return@htmlDocument
 			}
