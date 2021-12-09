@@ -8,127 +8,133 @@ import it.skrape.fetcher.extractIt
 import it.skrape.fetcher.skrape
 import it.skrape.selects.html5.div
 import it.skrape.selects.html5.h1
-import it.skrape.selects.html5.map
-import java.awt.Color.red
+import it.skrape.selects.html5.img
+import it.skrape.selects.html5.th
+import it.skrape.selects.html5.tr
+import it.skrape.selects.text
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.*
 
-const val firstValidVersion = "/wiki/Java_Edition_pre-Classic_rd-131655"
 const val listLink = "https://minecraft.fandom.com/wiki/Java_Edition_version_history"
 
-operator fun Regex.contains(text: CharSequence): Boolean = this.matches(text)
+val versionsExceptions = listOf("April Fools updates")
+// TODO : Handle exceptions
 
-fun String.remove(regex: Regex) = replace(regex, "")
-fun String.remove(regex: String) = replace(regex, "")
-fun String.get(regex: Regex) = replace(regex, "$1")
-fun String.getIfMatches(regex: Regex) = if (matches(regex)) get(regex) else null
-
-fun printError(message: Any) = println("\u001B[31m$message\u001B[0m")
-
-data class Snapshot(
-	var name: String = "",
-	var releaseTime: Long? = null,
-	var description: String? = null,
-	var downloadClient: String? = null,
-	var downloadJSON: String? = null
-)
-
-data class Version(
-	var name: String,
-	var releaseTime: Long?,
-	var imageUrl: String = "",
-	var description: String,
-	var importantDescription: String = description.split("\n").take(4).joinToString("\n"),
-	var snapshots: List<Snapshot>
-)
+fun calculateDate(str: String): Long? {
+	var result = str
+	result = when {
+		"[" in str -> result.remove(Regex("\\[.*?]"))
+		else -> result
+	}
+	result = result.get(Regex("[\\w-]+: (.+?) \\w+: .+"))
+	
+	val formatter = DateTimeFormatter.ofPattern("MMMM d, yyyy", Locale.ENGLISH)
+	val formattedDate = try {
+		LocalDate.parse(str.trimEnd(), formatter)
+	} catch (e: Exception) {
+		printError("Failed to parse date: '$str' ($str)")
+		null
+	}
+	return formattedDate?.toEpochSecond(LocalTime.now(), ZoneOffset.UTC)
+}
 
 suspend fun main() {
 	val client = HttpClient(CIO)
-	val response: HttpResponse = client.get(listLink)
 	val versions = mutableListOf<Version>()
-	val snapshots = mutableListOf<Snapshot>()
-	var validLinks = false
-	
-	response.readText().substringAfter("References").substringBefore("Categories").split("\n").forEach { it ->
-		if (it.contains("<li>")) {
-			val version = it.split("<li>")[1].split("</li>")[0]
-			val versionSubPath = Regex("<a href=\"(/wiki/[\\w_.-]+)\"").find(version)?.groupValues?.get(1) ?: return@forEach
-			if (versionSubPath == firstValidVersion) validLinks = true
-			if (!validLinks || "Java_Edition" !in versionSubPath) return@forEach
-			val versionLink = "https://minecraft.fandom.com$versionSubPath"
-			println(versionLink)
-			
-			val extracted = skrape(HttpFetcher) {
-				request {
-					url = versionLink
-				}
+	skrape(HttpFetcher) {
+		request {
+			url = listLink
+		}
+		
+		extractIt<List<Version>> {
+			htmlDocument {
+				relaxed = true
 				
-				extractIt<Snapshot> {
-					htmlDocument {
-						relaxed = true
-						
-						if (findFirst("ul.categories").children.map { it.text }.none { it == "Java Edition versions"}) {
-							return@htmlDocument
+				val versionsBody = findFirst("table.navbox.hlist.collapsible > tbody")
+				versionsBody.children.filter { it.contains("span.navbox-title > a.mw-redirect > span.nowrap") }.forEach { el ->
+					val version = skrape(HttpFetcher) {
+						request {
+							val subLink = el.findFirst("a").attributes["href"] ?: return@request
+							url = "https://minecraft.fandom.com$subLink"
 						}
 						
-						it.name = h1(".page-header__title") { findFirst { ownText } }
-						it.description = div(".mw-parser-output") {
-							findFirst { children.first { it.tagName == "p" }.text }
-						}
-						
-						val table = findFirst(".infobox-rows > tbody")
-						
-						try {
-							val download = table.findFirst {
-								findAll("tr").first {
-									it.children.any { it.text.contains("Downloads") }
+						extractIt<Version> {
+							htmlDocument {
+								it.name = findFirst("h1#firstHeading").text
+								it.description = findFirst("div.mw-parser-output > p").text
+								findFirst("table.infobox-rows > tbody").findAny {
+									th {
+										findFirst {
+											text.contains("Starting version")
+											this
+										}
+									}
+								}?.findFirst("td")?.text?.let { date ->
+									it.releaseTime = calculateDate(date)
 								}
-							}
-							it.downloadClient = download.findFirst("td > p").let {
-								it.children.firstOrNull { it.tagName == "a" }?.attributes?.get("href")
-							}
-							it.downloadJSON = download.findFirst("td > p").let {
-								it.children.firstOrNull {
-									it.tagName == "a" && it.attributes["href"]?.endsWith(".json") == true
-								}?.attributes?.get("href")
-							}
-						} catch (_: Exception) {}
-						
-						
-						it.releaseTime = table.findFirst {
-							findAll("tr").firstOrNull {
-								it.children.any { it.text.contains("Release date") }
-							}
-						}?.findFirst("td")?.let { td ->
-							td.children.firstOrNull { it.tagName == "p" }?.text?.let {
-								var result = it
-								result = when {
-									"[" in it -> result.remove(Regex("\\[.*?]"))
-									else -> result
-								}
-								result = result.get(Regex("[\\w-]+: (.+?) \\w+: .+"))
 								
-								
-								val formatter = DateTimeFormatter.ofPattern("MMMM d, yyyy", Locale.ENGLISH)
-								val formattedDate = try {
-									LocalDate.parse(result.trimEnd(), formatter)
-								} catch (e: Exception) {
-									printError("Failed to parse date: '$it' ($result)")
-									null
-								}
-								formattedDate?.toEpochSecond(LocalTime.now(), ZoneOffset.UTC)
+								it.imageUrl = findFirst("div.infobox-imagearea animated-container > div > a.img > img").attributes["href"] ?: "Not found."
+								it.snapshots = el.findAll("td > ul > li > i > a") { map { scrapSnapshot(it.attributes["href"] ?: "") }}
 							}
 						}
 					}
+					versions += version
 				}
 			}
+		}
+	}
+	println(versions)
+}
+
+fun scrapSnapshot(link: String) = skrape(HttpFetcher) {
+	println(link)
+	request {
+		url = link
+	}
+	
+	extractIt<Snapshot> {
+		htmlDocument {
+			relaxed = true
 			
-			println(extracted)
+			if (findFirst("ul.categories").children.map { it.text }.none { it == "Java Edition versions" }) {
+				return@htmlDocument
+			}
 			
-			snapshots.add(extracted)
+			it.name = h1(".page-header__title") { findFirst { ownText } }
+			it.description = div(".mw-parser-output") {
+				findFirst { children.first { it.tagName == "p" }.text }
+			}
+			
+			val table = findFirst(".infobox-rows > tbody")
+			
+			try {
+				val download = table.findFirst {
+					findAll("tr").first {
+						it.children.any { it.text.contains("Downloads") }
+					}
+				}
+				it.downloadClient = download.findFirst("td > p").let {
+					it.children.firstOrNull { it.tagName == "a" }?.attributes?.get("href")
+				}
+				it.downloadJSON = download.findFirst("td > p").let {
+					it.children.firstOrNull {
+						it.tagName == "a" && it.attributes["href"]?.endsWith(".json") == true
+					}?.attributes?.get("href")
+				}
+			} catch (_: Exception) {
+			}
+			
+			
+			it.releaseTime = table.findFirst {
+				findAll("tr").firstOrNull {
+					it.children.any { it.text.contains("Release date") }
+				}
+			}?.findFirst("td")?.let { td ->
+				td.children.firstOrNull { it.tagName == "p" }?.text?.let(::calculateDate)
+			}
 		}
 	}
 }
