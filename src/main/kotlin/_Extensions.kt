@@ -8,6 +8,9 @@ fun String.remove(regex: String) = replace(regex, "")
 fun String.get(regex: Regex) = replace(regex, "$1")
 fun String.getIfMatches(regex: Regex) = if (matches(regex)) get(regex) else null
 
+val DocElement?.href: String?
+	get() = this?.attributes?.get("href")
+
 fun DocElement.contains(cssSelector: String) = try {
 	findFirst(cssSelector)
 	true

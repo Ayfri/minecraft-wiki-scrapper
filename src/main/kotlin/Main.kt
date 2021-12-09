@@ -1,5 +1,3 @@
-import io.ktor.client.*
-import io.ktor.client.engine.cio.*
 import it.skrape.core.htmlDocument
 import it.skrape.fetcher.HttpFetcher
 import it.skrape.fetcher.extractIt
@@ -17,6 +15,8 @@ const val LIST_LINK = "https://minecraft.fandom.com/wiki/Java_Edition_version_hi
 const val FANDOM_URL = "https://minecraft.fandom.com"
 
 val versionsExceptions = listOf("April Fools updates")
+val versionsSkip = listOf(Regex("Java_Edition_[a-z]+_server_.+", setOf(RegexOption.IGNORE_CASE)))
+val snapshotListSkip = listOf("Version history", "Development versions", "Full Release")
 
 // TODO : Handle exceptions
 
@@ -40,24 +40,27 @@ fun calculateDate(str: String): Long? {
 }
 
 suspend fun main() {
-	val client = HttpClient(CIO)
 	val versions = mutableListOf<Version>()
 	skrape(HttpFetcher) {
 		request {
 			url = LIST_LINK
 		}
 		
-		
 		extractIt<Any> {
 			htmlDocument {
-				relaxed = true
-				
 				val versionsBody = findFirst("table.navbox.hlist.collapsible > tbody")
-				versionsBody.children.filter { it.contains("span.navbox-title > a.mw-redirect > span.nowrap") }.forEach { el ->
+				versionsBody.children.filter {
+					it.contains("span.navbox-title > a")
+				}.distinctBy {
+					it.findFirst("a").href
+				}.forEach { el ->
+					val link = el.findFirst("a").href ?: return@forEach
+					println("Version : $FANDOM_URL$link")
+					if (versionsSkip.any { link.matches(it) }) return@forEach
+					
 					val version = skrape(HttpFetcher) {
 						request {
-							val subLink = el.findFirst("a").attributes["href"] ?: return@request
-							url = FANDOM_URL + subLink
+							url = FANDOM_URL + link
 						}
 						
 						extractIt<Version> {
@@ -76,7 +79,14 @@ suspend fun main() {
 								}
 								
 								it.imageUrl = findFirst("div.infobox-imagearea.animated-container > div > a.image > img").attributes["src"] ?: "Not found."
-								it.snapshots = el.findAll("td > ul > li a") { map { scrapSnapshot(it.attributes["href"] ?: "") } }
+								it.snapshots =
+									el.findAll("td > ul > li a") {
+										filter {
+											snapshotListSkip.none { exception -> it.text.contains(exception) }
+										}.map {
+											scrapSnapshot(it.href ?: "")
+										}
+									}
 							}
 						}
 					}
@@ -119,8 +129,8 @@ fun scrapSnapshot(link: String) = skrape(HttpFetcher) {
 				}
 				it.downloadJSON = download.findFirst("td > p").let {
 					it.children.firstOrNull {
-						it.tagName == "a" && it.attributes["href"]?.endsWith(".json") == true
-					}?.attributes?.get("href")
+						it.tagName == "a" && it.href?.endsWith(".json") == true
+					}?.href
 				}
 			} catch (_: Exception) {
 			}
