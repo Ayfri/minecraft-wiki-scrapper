@@ -11,7 +11,6 @@ data class Snapshot(
 data class Version(
 	var name: String = "",
 	var releaseTime: Long? = null,
-	var imageUrl: String = "",
 	var description: String = "",
 	var importantDescription: String = description.split("\n").take(4).joinToString("\n"),
 	var snapshots: List<Snapshot> = emptyList()

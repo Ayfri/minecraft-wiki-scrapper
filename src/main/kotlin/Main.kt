@@ -11,8 +11,9 @@ import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.*
 
-const val LIST_LINK = "https://minecraft.fandom.com/wiki/Java_Edition_version_history"
 const val FANDOM_URL = "https://minecraft.fandom.com"
+const val JAVA_LINK = "https://minecraft.fandom.com/wiki/Java_Edition_"
+const val LIST_LINK = "https://minecraft.fandom.com/wiki/Java_Edition_version_history"
 
 val versionsExceptions = listOf("April Fools updates")
 val versionsSkip = listOf(Regex("Java_Edition_[a-z]+_server_.+", setOf(RegexOption.IGNORE_CASE)))
@@ -78,7 +79,6 @@ suspend fun main() {
 									it.releaseTime = calculateDate(date)
 								}
 								
-								it.imageUrl = findFirst("div.infobox-imagearea.animated-container > div > a.image > img").attributes["src"] ?: "Not found."
 								it.snapshots = el.findAll("td > ul > li a") {
 									filter {
 										snapshotListSkip.none { exception -> it.text.contains(exception) }
@@ -97,6 +97,17 @@ suspend fun main() {
 	}
 	val releaseVersion = versions.dropWhile { it.name == "Java Edition" }[0]
 	// TODO : Split this release into multiple versions
+	
+	val firstReleases = releaseVersion.snapshots.groupBy { it.snapshotFor?.get(Regex("(\\d\\.\\d{1,2})\\.\\d{1,2}")) }
+	val links = firstReleases.map { JAVA_LINK + it.key }
+	links.forEach { link ->
+		println("Parsing missing release version : $link")
+		val release = scrapSnapshot(link).let {
+			Version(it.name, it.releaseTime, description = it.description, snapshots = firstReleases[it.name] ?: listOf())
+		}
+		
+		versions.add(release)
+	}
 	
 	println(versions)
 }
