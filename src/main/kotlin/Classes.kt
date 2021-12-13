@@ -1,3 +1,6 @@
+import kotlinx.serialization.Serializable
+
+@Serializable
 data class Snapshot(
 	var name: String = "",
 	var releaseTime: Long? = null,
@@ -8,6 +11,7 @@ data class Snapshot(
 	var snapshotFor: String? = null
 )
 
+@Serializable
 data class Version(
 	var name: String = "",
 	var releaseTime: Long? = null,

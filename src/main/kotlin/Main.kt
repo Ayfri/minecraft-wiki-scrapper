@@ -5,6 +5,8 @@ import it.skrape.fetcher.skrape
 import it.skrape.selects.html5.div
 import it.skrape.selects.html5.h1
 import it.skrape.selects.html5.th
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneOffset
@@ -95,11 +97,11 @@ suspend fun main() {
 			}
 		}
 	}
-	val releaseVersion = versions.dropWhile { it.name == "Java Edition" }[0]
-	// TODO : Split this release into multiple versions
 	
+	val releaseVersion = versions.dropWhile { it.name == "Java Edition" }[0]
 	val firstReleases = releaseVersion.snapshots.groupBy { it.snapshotFor?.get(Regex("(\\d\\.\\d{1,2})\\.\\d{1,2}")) }
 	val links = firstReleases.map { JAVA_LINK + it.key }
+	
 	links.forEach { link ->
 		println("Parsing missing release version : $link")
 		val release = scrapSnapshot(link).let {
@@ -110,6 +112,10 @@ suspend fun main() {
 	}
 	
 	println(versions)
+	
+	val json = Json.encodeToString(versions)
+	println(json)
+	// TODO : Write to file
 }
 
 fun scrapSnapshot(link: String) = skrape(HttpFetcher) {
