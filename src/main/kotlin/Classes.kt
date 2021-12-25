@@ -11,13 +11,20 @@ data class Snapshot(
 
 	@Transient
 	var snapshotFor: String? = null
-)
+) {
+	init {
+		description = description.replace("\n", "\\n")
+	}
+}
 
 @Serializable
 data class Version(
 	var name: String = "",
 	var releaseTime: Long? = null,
 	var description: String = "",
-	var importantDescription: String = description.split("\n").take(4).joinToString("\n"),
 	var snapshots: List<Snapshot> = emptyList()
-)
+) {
+	init {
+		description = description.replace("\n", "\\n")
+	}
+}
