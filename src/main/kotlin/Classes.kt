@@ -1,4 +1,5 @@
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 
 @Serializable
 data class Snapshot(
@@ -8,6 +9,7 @@ data class Snapshot(
 	var downloadClient: String? = null,
 	var downloadJSON: String? = null,
 
+	@Transient
 	var snapshotFor: String? = null
 )
 

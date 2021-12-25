@@ -7,43 +7,33 @@ import it.skrape.selects.html5.h1
 import it.skrape.selects.html5.th
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import java.io.File
+import java.nio.file.Paths
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.*
+import kotlin.io.path.absolutePathString
 
-const val FANDOM_URL = "https://minecraft.fandom.com"
+const val JAVA_EDITION = "Java Edition"
 const val JAVA_LINK = "https://minecraft.fandom.com/wiki/Java_Edition_"
+const val FANDOM_URL = "https://minecraft.fandom.com"
 const val LIST_LINK = "https://minecraft.fandom.com/wiki/Java_Edition_version_history"
 
-val versionsExceptions = listOf("April Fools updates")
-val versionsSkip = listOf(Regex("Java_Edition_[a-z]+_server_.+", setOf(RegexOption.IGNORE_CASE)))
 val snapshotListSkip = listOf("Version history", "Development versions", "Full Release")
+val versionsExceptions = listOf("April Fools updates")
 
-// TODO : Handle exceptions
-
-fun calculateDate(str: String): Long? {
-	var result = str
-	result = when {
-		"[" in str -> result.remove(Regex("\\[.*?]"))
-		else -> result
-	}
-	result = result.get(Regex("[\\w-]+: (.+?) \\w+: .+"))
-	result = result.get(Regex(".+?\\((.+?)\\)"))
-	
-	val formatter = DateTimeFormatter.ofPattern("MMMM d, yyyy", Locale.ENGLISH)
-	val formattedDate = try {
-		LocalDate.parse(result.trimEnd(), formatter)
-	} catch (e: Exception) {
-		printError("Failed to parse date: '$result' ($result)")
-		null
-	}
-	return formattedDate?.toEpochSecond(LocalTime.now(), ZoneOffset.UTC)
-}
+val versionsSkip = listOf(Regex("Java_Edition_[a-z]+_server_.+", RegexOption.IGNORE_CASE), Regex("Version_history"))
+val versions = mutableListOf<Version>()
 
 suspend fun main() {
-	val versions = mutableListOf<Version>()
+	scrap()
+	fixMainReleaseVersion()
+	saveToJSON()
+}
+
+suspend fun scrap() {
 	skrape(HttpFetcher) {
 		request {
 			url = LIST_LINK
@@ -51,15 +41,15 @@ suspend fun main() {
 		
 		extractIt<Any> {
 			htmlDocument {
-				val versionsBody = findFirst("table.navbox.hlist.collapsible > tbody")
+				val versionsBody = findFirst("div[style*=\"overflow-x: hidden\"] > table.navbox.hlist.collapsible > tbody")
 				versionsBody.children.filter {
 					it.contains("span.navbox-title > a")
 				}.distinctBy {
 					it.findFirst("a").href
 				}.forEach { el ->
 					val link = el.findFirst("a").href ?: return@forEach
-					println("Version : $FANDOM_URL$link")
 					if (versionsSkip.any { link.matches(it) }) return@forEach
+					println("Version : $FANDOM_URL$link")
 					
 					val version = skrape(HttpFetcher) {
 						request {
@@ -81,7 +71,10 @@ suspend fun main() {
 									it.releaseTime = calculateDate(date)
 								}
 								
-								it.snapshots = el.findAll("td > ul > li a") {
+								var selector = "td > ul > li a"
+								if (it.name == JAVA_EDITION) selector += ", tr > th > a"
+								
+								it.snapshots = el.findAll(selector) {
 									filter {
 										snapshotListSkip.none { exception -> it.text.contains(exception) }
 									}.map {
@@ -91,40 +84,72 @@ suspend fun main() {
 							}
 						}
 					}
-					println(version)
+					println("${"-".repeat(40)} Parsed version : ${version.name}")
 					versions += version
 				}
 			}
 		}
 	}
+}
+
+fun fixMainReleaseVersion() {
+	println("${"=".repeat(20)} FIXING VERSIONS ${"=".repeat(20)}")
 	
-	val releaseVersion = versions.dropWhile { it.name == "Java Edition" }[0]
-	val firstReleases = releaseVersion.snapshots.groupBy { it.snapshotFor?.get(Regex("(\\d\\.\\d{1,2})\\.\\d{1,2}")) }
-	val links = firstReleases.map { JAVA_LINK + it.key }
+	val releaseVersion = versions.find { JAVA_EDITION == it.name } ?: run {
+		println("Can't find main version, can't fix versions.")
+		return@fixMainReleaseVersion
+	}
+	versions.removeIf { JAVA_EDITION == it.name }
 	
+	val firstReleases = releaseVersion.snapshots.groupBy { it.snapshotFor?.get(Regex("(\\d\\.\\d{1,2})\\.\\d{1,2}")) }.filterKeys { it != null } as Map<String, List<Snapshot>>
+	val links = firstReleases.map { "/wiki/Java_Edition_" + it.key }
 	links.forEach { link ->
-		println("Parsing missing release version : $link")
-		val release = scrapSnapshot(link).let {
-			Version(it.name, it.releaseTime, description = it.description, snapshots = firstReleases[it.name] ?: listOf())
+		println("Fixing release : ${link.remove("/wiki/").replace("_", " ")}")
+		val release = scrapSnapshot(link).run {
+			Version(name, releaseTime, description = description, snapshots = firstReleases[link.remove("/wiki/Java_Edition_")] ?: listOf())
 		}
 		
 		versions.add(release)
 	}
+}
+
+fun saveToJSON() {
+	val json = Json.encodeToString<List<Version>>(versions)
+	val local = Paths.get(".")
+	val file = File(local.absolutePathString(), "versions.json")
+	file.writeText(json)
 	
-	println(versions)
+	println("Saved to ${file.normalize().absolutePath}")
+}
+
+
+fun calculateDate(str: String): Long? {
+	var result = str
+	result = when {
+		"[" in str -> result.remove(Regex("\\[.*?]"))
+		else -> result
+	}
+	result = result.get(Regex("[\\w-]+: (.+?) \\w+: .+"))
+	result = result.get(Regex(".+?\\((.+?)\\)"))
 	
-	val json = Json.encodeToString(versions)
-	println(json)
-	// TODO : Write to file
+	val formatter = DateTimeFormatter.ofPattern("MMMM d, yyyy", Locale.ENGLISH)
+	val formattedDate = try {
+		LocalDate.parse(result.trimEnd(), formatter)
+	} catch (e: Exception) {
+		printError("Failed to parse date: '$result' ($result)")
+		null
+	}
+	return formattedDate?.toEpochSecond(LocalTime.now(), ZoneOffset.UTC)
 }
 
 fun scrapSnapshot(link: String) = skrape(HttpFetcher) {
 	println("Snapshot: $FANDOM_URL$link")
 	request {
 		url = FANDOM_URL + link
+		timeout = 30_000
 	}
 	
-	extractIt<Snapshot> {
+	extractIt<Snapshot> { it ->
 		htmlDocument {
 			if (findFirst("ul.categories").children.map { it.text }.none { it == "Java Edition versions" }) {
 				return@htmlDocument
@@ -151,23 +176,12 @@ fun scrapSnapshot(link: String) = skrape(HttpFetcher) {
 						it.tagName == "a" && it.href?.endsWith(".json") == true
 					}?.href
 				}
-				if (
-					table.contains {
-						findAll("tr").first {
-							it.children.any {
-								it.text.matches(Regex("(Snapshot|Pre-Release|Release Candidate) for"))
-							}
-						}
+				
+				table.findFirst {
+					findAll("tr").firstOrNull {
+						it.children.any { it.text.contains(Regex("(Snapshot|Pre-Release|Release Candidate) for", RegexOption.IGNORE_CASE)) }
 					}
-				) {
-					it.snapshotFor = table.findAny {
-						findAll("tr").first {
-							it.children.any {
-								it.text.matches(Regex("(Snapshot|Pre-Release|Release Candidate) for"))
-							}
-						}
-					}?.findFirst("td > p > a")?.text?.get(Regex("(\\d.\\d+)(?>.\\d+)?"))
-				}
+				}?.findFirst("td > p > a")?.text?.let { f -> it.snapshotFor = f.replace(" ", "_") }
 			} catch (_: Exception) {
 			}
 			
