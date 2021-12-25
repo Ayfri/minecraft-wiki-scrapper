@@ -43,7 +43,7 @@ fun DocElement.findFirstElementWithTableHeaderRegex(tableHeaderName: Regex) = fi
 
 fun saveToJSON() {
 	val json = Json.encodeToString<List<Version>>(versions)
-	val local = Paths.get(".")
+	val local = Paths.get("out")
 	val file = File(local.absolutePathString(), "versions.json")
 	file.writeText(json)
 	
