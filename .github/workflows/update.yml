@@ -1,0 +1,33 @@
+name: Update versions
+
+on:
+  schedule:
+  - cron: "0 0 * * 5"
+
+jobs:
+  update:
+    name: Update json file
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Install JDK
+      uses: actions/setup-java@v2
+      with:
+        java-version: "16"
+        distribution: "adopt"
+
+
+    - name: Validate Gradle wrapper
+      uses: gradle/wrapper-validation-action@e6e38bacfdf1a337459f332974bb2327a31aaf4b
+
+    - name: Run gradle
+      run: ./gradlew clean build
+
+    - name: Commit changes
+      run: |
+        git config --global user.email "actions@github.com"
+        git config --global user.name "GitHub Action"
+        git add out/versions.json -f
+        git commit -m "feat: Update versions."
+        git push origin master
