@@ -52,7 +52,7 @@ suspend fun scrap() {
 								it.name = findFirst("h1#firstHeading").text
 								it.description = findFirst("div.mw-parser-output > p").text
 								findFirst("table.infobox-rows > tbody").findFirstElementWithTableHeaderName("Starting version")
-									?.findFirst("td")?.text?.let { date ->
+									?.findFirst("td")?.html?.let { date ->
 										it.releaseTime = calculateDate(date)
 									}
 								
@@ -96,12 +96,12 @@ fun scrapSnapshot(link: String) = skrape(HttpFetcher) {
 			
 			it.name = h1(".page-header__title") { findFirst { ownText } }
 			it.description = div(".mw-parser-output") {
-				findFirst { children.first { it.tagName == "p" }.text }
+				findFirst { children.first { it.tagName == "p" }.html }
 			}
 			
 			val table = findFirst(".infobox-rows > tbody")
 			
-			try {
+			runCatching {
 				val download = table.findFirstElementWithTableHeaderName("Downloads")!!
 				it.downloadClient = download.findFirst("td > p").let {
 					it.children.firstOrNull { it.tagName == "a" }?.attributes?.get("href")
@@ -115,7 +115,6 @@ fun scrapSnapshot(link: String) = skrape(HttpFetcher) {
 				table.findFirstElementWithTableHeaderRegex(
 					Regex("(Snapshot|Pre-Release|Release Candidate) for", RegexOption.IGNORE_CASE)
 				)?.findFirst("td > p > a")?.text?.let { f -> it.snapshotFor = f.replace(" ", "_") }
-			} catch (_: Exception) {
 			}
 			
 			it.releaseTime = table.findFirstElementWithTableHeaderName("Release date")?.findFirst("td")?.let { td ->
