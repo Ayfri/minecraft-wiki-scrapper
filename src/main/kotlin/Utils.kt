@@ -41,6 +41,7 @@ fun DocElement.findFirstElementWithTableHeaderRegex(tableHeaderName: Regex) = fi
 	}
 }
 
+fun String.fixSupLinks(url: String): String = replace(Regex("(<sup.+class=\"reference\"><a href=\")(.+)(\">.+</a></sup>)"), "$1$url$2$3")
 
 fun saveToJSON() {
 	val jsonSerializer = Json { prettyPrint = true }

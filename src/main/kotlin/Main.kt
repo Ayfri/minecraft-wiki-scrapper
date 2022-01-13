@@ -4,8 +4,6 @@ import it.skrape.fetcher.extractIt
 import it.skrape.fetcher.skrape
 import it.skrape.selects.html5.div
 import it.skrape.selects.html5.h1
-import it.skrape.selects.html5.sup
-import org.w3c.dom.html.HTMLLinkElement
 
 const val FANDOM_URL = "https://minecraft.fandom.com"
 const val JAVA_EDITION = "Java Edition"
@@ -52,7 +50,7 @@ suspend fun scrap() {
 						extractIt<Version> versionExtract@ {
 							htmlDocument {
 								it.name = findFirst("h1#firstHeading").text
-								it.description = findFirst("div.mw-parser-output > p").html.replace(Regex("(<sup.+class=\"reference\"><a href=\")(.+)(\">.+</a></sup>)"), "$1${this@versionExtract.baseUri}$2$3")
+								it.description = findFirst("div.mw-parser-output > p").html.fixSupLinks(this@versionExtract.baseUri)
 								findFirst("table.infobox-rows > tbody").findFirstElementWithTableHeaderName("Starting version")
 									?.findFirst("td")?.text?.let { date ->
 										it.releaseTime = calculateDate(date)
@@ -98,7 +96,7 @@ fun scrapSnapshot(link: String) = skrape(HttpFetcher) {
 			
 			it.name = h1(".page-header__title") { findFirst { ownText } }
 			it.description = div(".mw-parser-output") {
-				findFirst { children.first { it.tagName == "p" }.html }
+				findFirst { children.first { it.tagName == "p" }.html.fixSupLinks(this@extractIt.baseUri) }
 			}
 			
 			val table = findFirst(".infobox-rows > tbody")
