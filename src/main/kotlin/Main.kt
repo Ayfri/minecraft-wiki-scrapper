@@ -50,9 +50,9 @@ suspend fun scrap() {
 						extractIt<Version> {
 							htmlDocument {
 								it.name = findFirst("h1#firstHeading").text
-								it.description = findFirst("div.mw-parser-output > p").text
+								it.description = findFirst("div.mw-parser-output > p").html
 								findFirst("table.infobox-rows > tbody").findFirstElementWithTableHeaderName("Starting version")
-									?.findFirst("td")?.html?.let { date ->
+									?.findFirst("td")?.text?.let { date ->
 										it.releaseTime = calculateDate(date)
 									}
 								
