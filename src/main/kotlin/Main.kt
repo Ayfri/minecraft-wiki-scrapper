@@ -47,14 +47,13 @@ suspend fun scrap() {
 							timeout = TIMEOUT
 						}
 						
-						extractIt<Version> versionExtract@ {
+						extractIt<Version> versionExtract@{
 							htmlDocument {
 								it.name = findFirst("h1#firstHeading").text
 								it.description = findFirst("div.mw-parser-output > p").html.fixSupLinks(this@versionExtract.baseUri)
-								findFirst("table.infobox-rows > tbody").findFirstElementWithTableHeaderName("Starting version")
-									?.findFirst("td")?.text?.let { date ->
-										it.releaseTime = calculateDate(date)
-									}
+								findFirst("table.infobox-rows > tbody").findFirstElementWithTableHeaderName("Starting version")?.findFirst("td")?.text?.let { date ->
+									it.releaseTime = calculateDate(date)
+								}
 								
 								var selector = "td > ul > li a"
 								if (it.name == JAVA_EDITION) selector += ", tr > th > a"
@@ -115,6 +114,9 @@ fun scrapSnapshot(link: String) = skrape(HttpFetcher) {
 				table.findFirstElementWithTableHeaderRegex(
 					Regex("(Snapshot|Pre-Release|Release Candidate) for", RegexOption.IGNORE_CASE)
 				)?.findFirst("td > p > a")?.text?.let { f -> it.snapshotFor = f.replace(" ", "_") }
+				table.findFirstElementWithTableHeaderName("Type")?.findFirst("td > p")?.text.let { type ->
+					it.snapshotType = SnapshotType.resolve(type)
+				}
 			}
 			
 			it.releaseTime = table.findFirstElementWithTableHeaderName("Release date")?.findFirst("td")?.let { td ->
@@ -133,8 +135,7 @@ fun relinkMainReleaseVersions() {
 	}
 	versions.removeIf { JAVA_EDITION == it.name }
 	
-	val firstReleases =
-		releaseVersion.snapshots.groupBy { it.snapshotFor?.get(Regex("(\\d\\.\\d{1,2})\\.\\d{1,2}")) }.filterKeys { it != null } as Map<String, List<Snapshot>>
+	val firstReleases = releaseVersion.snapshots.groupBy { it.snapshotFor?.get(Regex("(\\d\\.\\d{1,2})\\.\\d{1,2}")) }.filterKeys { it != null } as Map<String, List<Snapshot>>
 	val links = firstReleases.map { "/wiki/Java_Edition_" + it.key }.toMutableSet()
 	links += "/wiki/Java_Edition_1.19"
 	links.forEach { link ->
