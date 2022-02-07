@@ -4,84 +4,68 @@ import it.skrape.fetcher.extractIt
 import it.skrape.fetcher.skrape
 import it.skrape.selects.html5.div
 import it.skrape.selects.html5.h1
-import it.skrape.selects.html5.th
-import java.time.LocalDate
-import java.time.LocalTime
-import java.time.ZoneOffset
-import java.time.format.DateTimeFormatter
-import java.util.*
 
-const val LIST_LINK = "https://minecraft.fandom.com/wiki/Java_Edition_version_history"
 const val FANDOM_URL = "https://minecraft.fandom.com"
+const val JAVA_EDITION = "Java Edition"
+const val LIST_LINK = "https://minecraft.fandom.com/wiki/Java_Edition_version_history"
+const val TIMEOUT = 30_000
 
-val versionsExceptions = listOf("April Fools updates")
-val versionsSkip = listOf(Regex("Java_Edition_[a-z]+_server_.+", setOf(RegexOption.IGNORE_CASE)))
 val snapshotListSkip = listOf("Version history", "Development versions", "Full Release")
-
-// TODO : Handle exceptions
-
-fun calculateDate(str: String): Long? {
-	var result = str
-	result = when {
-		"[" in str -> result.remove(Regex("\\[.*?]"))
-		else -> result
-	}
-	result = result.get(Regex("[\\w-]+: (.+?) \\w+: .+"))
-	result = result.get(Regex(".+?\\((.+?)\\)"))
-	
-	val formatter = DateTimeFormatter.ofPattern("MMMM d, yyyy", Locale.ENGLISH)
-	val formattedDate = try {
-		LocalDate.parse(result.trimEnd(), formatter)
-	} catch (e: Exception) {
-		printError("Failed to parse date: '$result' ($result)")
-		null
-	}
-	return formattedDate?.toEpochSecond(LocalTime.now(), ZoneOffset.UTC)
-}
+val versionsExceptions = listOf("April Fools updates")
+val versionsSkip = listOf(Regex("Java_Edition_[a-z]+_server_.+", RegexOption.IGNORE_CASE), Regex("Version_history"))
+val versions = mutableListOf<Version>()
 
 suspend fun main() {
-	val versions = mutableListOf<Version>()
+	scrap()
+	relinkMainReleaseVersions()
+	addMissingVersions()
+	saveToJSON()
+}
+
+suspend fun scrap() {
 	skrape(HttpFetcher) {
 		request {
 			url = LIST_LINK
+			timeout = TIMEOUT
 		}
 		
 		extractIt<Any> {
 			htmlDocument {
-				val versionsBody = findFirst("table.navbox.hlist.collapsible > tbody")
+				val versionsBody = findFirst("div[style*=\"overflow-x: hidden\"] > table.navbox.hlist.collapsible > tbody")
 				versionsBody.children.filter {
 					it.contains("span.navbox-title > a")
 				}.distinctBy {
 					it.findFirst("a").href
 				}.forEach { el ->
 					val link = el.findFirst("a").href ?: return@forEach
-					println("Version : $FANDOM_URL$link")
 					if (versionsSkip.any { link.matches(it) }) return@forEach
+					println("Version : $FANDOM_URL$link")
 					
 					val version = skrape(HttpFetcher) {
 						request {
 							url = FANDOM_URL + link
+							timeout = TIMEOUT
 						}
 						
-						extractIt<Version> {
+						extractIt<Version> versionExtract@ {
 							htmlDocument {
 								it.name = findFirst("h1#firstHeading").text
-								it.description = findFirst("div.mw-parser-output > p").text
-								findFirst("table.infobox-rows > tbody").findAny {
-									th {
-										findFirst {
-											text.contains("Starting version")
-											this
-										}
+								it.description = findFirst("div.mw-parser-output > p").html.fixSupLinks(this@versionExtract.baseUri)
+								findFirst("table.infobox-rows > tbody").findFirstElementWithTableHeaderName("Starting version")
+									?.findFirst("td")?.text?.let { date ->
+										it.releaseTime = calculateDate(date)
 									}
-								}?.parent?.findFirst("td")?.text?.let { date ->
-									it.releaseTime = calculateDate(date)
-								}
 								
-								it.imageUrl = findFirst("div.infobox-imagearea.animated-container > div > a.image > img").attributes["src"] ?: "Not found."
-								it.snapshots = el.findAll("td > ul > li a") {
+								var selector = "td > ul > li a"
+								if (it.name == JAVA_EDITION) selector += ", tr > th > a"
+								
+								it.snapshots = el.findAll(selector) {
 									filter {
 										snapshotListSkip.none { exception -> it.text.contains(exception) }
+									}.filterNot {
+										it.href?.contains("#Reupload") == true
+									}.distinctBy {
+										it.href
 									}.map {
 										scrapSnapshot(it.href ?: "")
 									}
@@ -89,22 +73,19 @@ suspend fun main() {
 							}
 						}
 					}
-					println(version)
+					println("${"-".repeat(40)} Parsed version : ${version.name}")
 					versions += version
 				}
 			}
 		}
 	}
-	val releaseVersion = versions.dropWhile { it.name == "Java Edition" }[0]
-	// TODO : Split this release into multiple versions
-	
-	println(versions)
 }
 
 fun scrapSnapshot(link: String) = skrape(HttpFetcher) {
 	println("Snapshot: $FANDOM_URL$link")
 	request {
 		url = FANDOM_URL + link
+		timeout = TIMEOUT
 	}
 	
 	extractIt<Snapshot> {
@@ -115,17 +96,13 @@ fun scrapSnapshot(link: String) = skrape(HttpFetcher) {
 			
 			it.name = h1(".page-header__title") { findFirst { ownText } }
 			it.description = div(".mw-parser-output") {
-				findFirst { children.first { it.tagName == "p" }.text }
+				findFirst { children.first { it.tagName == "p" }.html.fixSupLinks(this@extractIt.baseUri) }
 			}
 			
 			val table = findFirst(".infobox-rows > tbody")
 			
-			try {
-				val download = table.findFirst {
-					findAll("tr").first {
-						it.children.any { it.text.contains("Downloads") }
-					}
-				}
+			runCatching {
+				val download = table.findFirstElementWithTableHeaderName("Downloads")!!
 				it.downloadClient = download.findFirst("td > p").let {
 					it.children.firstOrNull { it.tagName == "a" }?.attributes?.get("href")
 				}
@@ -134,32 +111,65 @@ fun scrapSnapshot(link: String) = skrape(HttpFetcher) {
 						it.tagName == "a" && it.href?.endsWith(".json") == true
 					}?.href
 				}
-				if (
-					table.contains {
-						findAll("tr").first {
-							it.children.any {
-								it.text.matches(Regex("(Snapshot|Pre-Release|Release Candidate) for"))
-							}
-						}
-					}
-				) {
-					it.snapshotFor = table.findAny {
-						findAll("tr").first {
-							it.children.any {
-								it.text.matches(Regex("(Snapshot|Pre-Release|Release Candidate) for"))
-							}
-						}
-					}?.findFirst("td > p > a")?.text?.get(Regex("(\\d.\\d+)(?>.\\d+)?"))
-				}
-			} catch (_: Exception) {
+				
+				table.findFirstElementWithTableHeaderRegex(
+					Regex("(Snapshot|Pre-Release|Release Candidate) for", RegexOption.IGNORE_CASE)
+				)?.findFirst("td > p > a")?.text?.let { f -> it.snapshotFor = f.replace(" ", "_") }
 			}
 			
-			it.releaseTime = table.findFirst {
-				findAll("tr").firstOrNull {
-					it.children.any { it.text.contains("Release date") }
-				}
-			}?.findFirst("td")?.let { td ->
+			it.releaseTime = table.findFirstElementWithTableHeaderName("Release date")?.findFirst("td")?.let { td ->
 				td.children.firstOrNull { it.tagName == "p" }?.text?.let(::calculateDate)
+			}
+		}
+	}
+}
+
+fun relinkMainReleaseVersions() {
+	println("${"=".repeat(20)} FIXING VERSIONS ${"=".repeat(20)}")
+	
+	val releaseVersion = versions.find { JAVA_EDITION == it.name } ?: run {
+		println("Can't find main version, can't fix versions.")
+		return@relinkMainReleaseVersions
+	}
+	versions.removeIf { JAVA_EDITION == it.name }
+	
+	val firstReleases =
+		releaseVersion.snapshots.groupBy { it.snapshotFor?.get(Regex("(\\d\\.\\d{1,2})\\.\\d{1,2}")) }.filterKeys { it != null } as Map<String, List<Snapshot>>
+	val links = firstReleases.map { "/wiki/Java_Edition_" + it.key }.toMutableSet()
+	links += "/wiki/Java_Edition_1.19"
+	links.forEach { link ->
+		println("Fixing release : ${link.remove("/wiki/").replace("_", " ")}")
+		val release = scrapSnapshot(link).run {
+			Version(name, releaseTime, description = description, snapshots = firstReleases[link.remove("/wiki/Java_Edition_")] ?: listOf())
+		}
+		
+		versions.add(release)
+	}
+}
+
+fun addMissingVersions() {
+	skrape(HttpFetcher) {
+		request {
+			url = LIST_LINK
+			timeout = TIMEOUT
+		}
+		
+		extractIt<Any> {
+			htmlDocument {
+				val versionsBody = findFirst("div[style*=\"overflow-x: hidden\"] > table.navbox.hlist.collapsible > tbody")
+				
+				versionsExceptions.forEach {
+					println("${"-".repeat(50)} Adding missing version : $it")
+					val version = Version(it)
+					versionsBody.findFirstElementWithTableHeaderName(it)?.findAll("td > ul > li a") {
+						filter {
+							snapshotListSkip.none { exception -> it.text.contains(exception) }
+						}.map {
+							scrapSnapshot(it.href ?: "")
+						}
+					}?.let { version.snapshots = it }
+					versions.add(version)
+				}
 			}
 		}
 	}
