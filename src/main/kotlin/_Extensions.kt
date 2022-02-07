@@ -12,6 +12,8 @@ operator fun String.minus(regex: String): String = remove(regex)
 fun String.get(regex: Regex) = replace(regex, "$1")
 fun String.getIfMatches(regex: Regex) = if (matches(regex)) get(regex) else null
 
+fun List<Snapshot>.sorted() = sortedBy { it.releaseTime }
+
 val DocElement?.href: String?
 	get() = this?.attributes?.get("href")
 
@@ -30,21 +32,6 @@ inline fun <T> CssSelectable.contains(
 	true
 } catch (e: Exception) {
 	false
-}
-
-fun DocElement.findAny(cssSelector: String) = try {
-	findFirst(cssSelector)
-} catch (e: Exception) {
-	null
-}
-
-inline fun <T> DocElement.findAny(
-	cssSelector: String = "",
-	init: DocElement.() -> T
-) = try {
-	findFirst(cssSelector).init()
-} catch (e: Exception) {
-	null
 }
 
 fun printError(message: Any) = println("\u001B[31m$message\u001B[0m")

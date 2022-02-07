@@ -141,7 +141,11 @@ fun relinkMainReleaseVersions() {
 	links.forEach { link ->
 		println("Fixing release : ${link.remove("/wiki/").replace("_", " ")}")
 		val release = scrapSnapshot(link).run {
-			Version(name, releaseTime, description = description, snapshots = firstReleases[link.remove("/wiki/Java_Edition_")] ?: listOf())
+			val list = (firstReleases[link.remove("/wiki/Java_Edition_")] ?: listOf()).toMutableList()
+			list += releaseVersion.snapshots.filter {
+				it.snapshotType == SnapshotType.RELEASE && it.name.get(Regex("(\\d\\.\\d{1,2})\\.\\d{1,2}")) == name.get(Regex("(\\d\\.\\d{1,2})\\.\\d{1,2}"))
+			}
+			Version(name, releaseTime, description = description, snapshots = list.sorted())
 		}
 		
 		versions.add(release)

@@ -35,7 +35,7 @@ data class Snapshot(
 	var downloadJSON: String? = null,
 	
 	@Serializable
-	var snapshotType: SnapshotType = SnapshotType.RELEASE,
+	var snapshotType: SnapshotType? = null,
 	
 	@Transient
 	var snapshotFor: String? = null
